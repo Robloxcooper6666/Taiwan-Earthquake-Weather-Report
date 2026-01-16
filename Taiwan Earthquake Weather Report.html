@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>台灣地震與天氣監測儀表板</title>
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Leaflet CSS for Maps -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap');
+        body { font-family: 'Noto Sans TC', sans-serif; background-color: #f1f5f9; display: flex; flex-direction: column; min-height: 100vh; }
+        #map { height: 450px; width: 100%; border-radius: 1rem; z-index: 10; }
+        .intensity-tag { padding: 2px 8px; border-radius: 4px; font-weight: bold; color: white; }
+        .intensity-0 { background-color: #e2e8f0; color: #64748b; }
+        .intensity-1 { background-color: #90ee90; color: #000; }
+        .intensity-2 { background-color: #ffff00; color: #000; }
+        .intensity-3 { background-color: #ffcc00; color: #000; }
+        .intensity-4 { background-color: #ff9900; }
+        .intensity-5 { background-color: #ff0000; }
+        .intensity-6 { background-color: #990000; }
+        .intensity-7 { background-color: #4b0082; }
+        .shimmer {
+            background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+            background-size: 200% 100%;
+            animation: shimmer 1.5s infinite;
+        }
+        @keyframes shimmer {
+            0% { background-position: 200% 0; }
+            100% { background-position: -200% 0; }
+        }
+        .active-tab { border-bottom: 3px solid #2563eb; color: #2563eb; }
+        .modal-overlay { background-color: rgba(0, 0, 0, 0.5); backdrop-filter: blur(4px); transition: all 0.3s ease; }
+
+        .temp-cold { color: #3b82f6; }
+        .temp-comfort { color: #10b981; }
+        .temp-hot { color: #f97316; }
+    </style>
+</head>
+<body class="p-4 md:p-8">
+
+    <div class="max-w-7xl mx-auto flex-grow w-full">
+        <!-- Header -->
+        <header class="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4 bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+            <div>
+                <h1 class="text-3xl font-bold text-slate-800 flex items-center gap-2">
+                    <i data-lucide="layout-dashboard" class="text-blue-600"></i>
+                    台灣綜合監測儀表板
+                </h1>
+                <p class="text-slate-500 text-sm">數據來源：中央氣象署 (CWA) | 交互式地圖監測中</p>
+            </div>
+            <div class="flex flex-wrap gap-2">
+                <button onclick="toggleModal(true)" class="flex items-center gap-2 bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 px-4 py-2 rounded-full transition-all text-sm font-medium shadow-sm active:scale-95">
+                    <i data-lucide="info" size="16"></i> 版權與免責聲明
+                </button>
+                <button onclick="fetchAllData()" class="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-full transition-all shadow-md active:scale-95 text-sm font-medium">
+                    <i data-lucide="refresh-cw" size="18" id="refresh-icon"></i> 更新數據
+                </button>
+            </div>
+        </header>
+
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-8 mb-8">
+            <!-- Left Sidebar -->
+            <div class="lg:col-span-4 space-y-4">
+                <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                    <div class="flex border-b border-slate-100">
+                        <button onclick="switchTab('eq')" id="tab-eq" class="flex-1 py-4 font-bold transition-colors active-tab flex items-center justify-center gap-2">
+                            <i data-lucide="activity" size="18"></i> 最新地震
+                        </button>
+                        <button onclick="switchTab('we')" id="tab-we" class="flex-1 py-4 font-bold text-slate-400 transition-colors flex items-center justify-center gap-2">
+                            <i data-lucide="cloud-sun" size="18"></i> 各地天氣
+                        </button>
+                    </div>
+
+                    <div class="p-4">
+                        <div id="earthquakeList" class="space-y-4 overflow-y-auto max-h-[600px] pr-2">
+                            <div class="shimmer h-24 rounded-xl"></div>
+                            <div class="shimmer h-24 rounded-xl"></div>
+                        </div>
+                        <div id="weatherList" class="hidden space-y-3 overflow-y-auto max-h-[600px] pr-2">
+                            <div class="shimmer h-16 rounded-xl"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Content -->
+            <div class="lg:col-span-8 space-y-6">
+                <div id="detailView" class="hidden space-y-6">
+                    <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-200">
+                        <div id="map"></div>
+                    </div>
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-4" id="statCards"></div>
+                    <div id="intensitySection" class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                        <h3 class="text-lg font-bold mb-4 flex items-center gap-2 text-slate-700">
+                            <i data-lucide="map-pin" class="text-orange-500"></i> 各地最大震度
+                        </h3>
+                        <div id="intensityList" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3"></div>
+                    </div>
+                </div>
+
+                <div id="emptyState" class="flex flex-col items-center justify-center bg-white rounded-2xl shadow-sm border border-slate-200 p-12 h-full text-center">
+                    <div class="bg-blue-50 p-6 rounded-full mb-4">
+                        <i data-lucide="map" size="48" class="text-blue-500"></i>
+                    </div>
+                    <h3 class="text-xl font-bold text-slate-700">請選取監測項目</h3>
+                    <p class="text-slate-500 mt-2 max-w-sm">點擊左側列表獲取詳細資訊與地圖區域標註。</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="mt-auto pt-8 pb-4 border-t border-slate-200 text-center text-slate-400 text-xs">
+        <p>© 2026 台灣綜合監測儀表板 | 製作人：陳麒安</p>
+    </footer>
+
+    <!-- Copyright Modal -->
+    <div id="copyrightModal" class="fixed inset-0 z-[3000] hidden flex items-center justify-center p-4">
+        <div class="modal-overlay absolute inset-0" onclick="toggleModal(false)"></div>
+        <div class="bg-white rounded-3xl shadow-2xl z-[3001] max-w-2xl w-full p-8 relative">
+            <button onclick="toggleModal(false)" class="absolute top-6 right-6 text-slate-400 hover:text-slate-600"><i data-lucide="x"></i></button>
+            <h2 class="text-2xl font-bold mb-4 flex items-center gap-2">
+                <i data-lucide="shield-check" class="text-blue-600"></i> 版權與免責聲明
+            </h2>
+            <div class="space-y-4 text-slate-600 text-sm leading-relaxed overflow-y-auto max-h-[60vh] pr-2">
+                <section>
+                    <h3 class="font-bold text-slate-800 mb-1">關於本站</h3>
+                    <p>本儀表板由 <b>陳麒安</b> 開發製作，旨在整合政府公開資訊，提供台灣即時氣象與地震資料的可視化儀表板。</p>
+                </section>
+
+                <section>
+                    <h3 class="font-bold text-slate-800 mb-1 text-red-600">法律聲明：禁止非法使用 API</h3>
+                    <p class="bg-red-50 p-3 rounded-lg border border-red-100">
+                        <b>嚴禁盜用：</b> 本站內含之 API 授權金鑰僅授權於本網域與指定功能使用。嚴禁任何第三方透過技術手段（如：爬蟲、逆向工程、API 攔截等）擷取或盜用本站之 API 金鑰進行開發或轉接。<b>違者經查獲，開發者將保留法律追訴權，並採取必要之技術阻斷措施，追究到底。</b>
+                    </p>
+                </section>
+
+                <section>
+                    <h3 class="font-bold text-slate-800 mb-1">免責聲明 (Disclaimer)</h3>
+                    <ul class="list-disc pl-5 space-y-1">
+                        <li><b>數據延遲：</b>本站數據取自中央氣象署 API，資訊可能因網路傳輸存在延遲，不可作為防災預警之唯一依據。</li>
+                        <li><b>資訊正確性：</b>本站僅負責呈現數據，不保證內容絕對正確。應以 <a href="https://www.cwa.gov.tw" target="_blank" class="text-blue-500 underline">中央氣象署官方發佈</a> 為準。</li>
+                        <li><b>損害賠償：</b>使用者因使用本站資訊導致之任何直接或間接損害，本站及其開發者概不負責。</li>
+                    </ul>
+                </section>
+
+                <section>
+                    <h3 class="font-bold text-slate-800 mb-1">技術來源</h3>
+                    <ul class="list-disc pl-5 space-y-1 text-xs">
+                        <li>數據來源：交通部中央氣象署 (CWA) 開放資料平台。</li>
+                        <li>地理資料：g0v 台灣縣市邊界 GeoJSON。</li>
+                    </ul>
+                </section>
+            </div>
+            <button onclick="toggleModal(false)" class="mt-8 w-full bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-xl font-bold transition-all active:scale-[0.98]">我已閱讀並同意以上條款</button>
+        </div>
+    </div>
+
+    <!-- Error Toast -->
+    <div id="errorToast" class="fixed bottom-4 right-4 bg-red-600 text-white px-6 py-3 rounded-lg shadow-2xl transform translate-y-20 transition-transform duration-300 flex items-center gap-3 z-[2000]">
+        <i data-lucide="alert-circle"></i><span id="errorMessage">載入失敗</span>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        // 注意：此 API Key 僅供本專案合法使用，嚴禁盜用。
+        const apiKey = "CWA-38806EBD-BB4F-46EF-A182-283B29EEF79E";
+        let map, marker, geoLayer, earthquakes = [], weatherData = [], geoJsonData = null;
+
+        function initMap() {
+            if (!map) {
+                map = L.map('map').setView([23.6, 121], 7);
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    attribution: '&copy; OSM'
+                }).addTo(map);
+            }
+        }
+
+        async function fetchGeoJson() {
+            const sources = [
+                'https://cdn.jsdelivr.net/gh/g0v/tw-town-geojson@master/tw_county.geojson',
+                'https://raw.githubusercontent.com/g0v/tw-town-geojson/master/tw_county.geojson'
+            ];
+            for (let url of sources) {
+                try {
+                    const res = await fetch(url);
+                    if (res.ok) { geoJsonData = await res.json(); return; }
+                } catch (e) { console.warn("GeoJSON retry..."); }
+            }
+        }
+
+        async function fetchAllData() {
+            const refreshIcon = document.getElementById('refresh-icon');
+            refreshIcon.classList.add('animate-spin');
+            try {
+                initMap();
+                await Promise.all([fetchEarthquakeData(), fetchWeatherData(), fetchGeoJson()]);
+            } catch (error) { showError(error.message); }
+            finally { refreshIcon.classList.remove('animate-spin'); }
+        }
+
+        async function fetchEarthquakeData() {
+            const url = `https://opendata.cwa.gov.tw/api/v1/rest/datastore/E-A0015-001?Authorization=${apiKey}&format=JSON`;
+            const response = await fetch(url);
+            const data = await response.json();
+            earthquakes = data.records.Earthquake;
+            renderEarthquakeList(earthquakes);
+        }
+
+        async function fetchWeatherData() {
+            const url = `https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-C0032-001?Authorization=${apiKey}&format=JSON`;
+            const response = await fetch(url);
+            const data = await response.json();
+            weatherData = data.records.location;
+            renderWeatherList(weatherData);
+        }
+
+        function getEarthquakeLocation(eq) {
+            const info = eq.EarthquakeInfo;
+            return info.EarthquakeLocation || info.Epicenter?.Location || "未知地點";
+        }
+
+        function renderEarthquakeList(list) {
+            const container = document.getElementById('earthquakeList');
+            container.innerHTML = list.map((eq, i) => {
+                const info = eq.EarthquakeInfo;
+                const magnitude = info.EarthquakeMagnitude?.MagnitudeValue || 0;
+                const location = getEarthquakeLocation(eq);
+                return `
+                    <div onclick="showEqDetail(${i})" class="bg-slate-50 p-4 rounded-xl border border-slate-200 cursor-pointer hover:border-blue-400 hover:bg-blue-50 transition-all">
+                        <div class="flex justify-between items-center mb-1">
+                            <span class="text-[10px] font-bold text-slate-400">#${eq.EarthquakeNo || '報告'}</span>
+                            <span class="intensity-tag intensity-${Math.floor(magnitude)} text-xs">規模 ${magnitude}</span>
+                        </div>
+                        <h4 class="font-bold text-slate-700">${location}</h4>
+                    </div>
+                `;
+            }).join('');
+            lucide.createIcons();
+        }
+
+        function renderWeatherList(locations) {
+            const container = document.getElementById('weatherList');
+            container.innerHTML = locations.map((loc, i) => {
+                const wx = loc.weatherElement.find(e => e.elementName === 'Wx').time[0].parameter.parameterName;
+                const minT = loc.weatherElement.find(e => e.elementName === 'MinT').time[0].parameter.parameterName;
+                const maxT = loc.weatherElement.find(e => e.elementName === 'MaxT').time[0].parameter.parameterName;
+                const tClass = parseInt(maxT) < 20 ? 'temp-cold' : (parseInt(maxT) > 28 ? 'temp-hot' : 'temp-comfort');
+                return `
+                    <div onclick="highlightCounty('${loc.locationName}', ${i})" class="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100 hover:border-blue-300 cursor-pointer transition-all">
+                        <div class="flex items-center gap-3">
+                            <i data-lucide="${wx.includes('雨')?'cloud-rain':wx.includes('雲')?'cloud':'sun'}" class="text-blue-500" size="20"></i>
+                            <div class="font-bold text-slate-700">${loc.locationName}</div>
+                        </div>
+                        <div class="text-right font-bold ${tClass}">${minT}° - ${maxT}°C</div>
+                    </div>
+                `;
+            }).join('');
+            lucide.createIcons();
+        }
+
+        function showEqDetail(index) {
+            const eq = earthquakes[index];
+            const info = eq.EarthquakeInfo;
+            const location = getEarthquakeLocation(eq);
+            document.getElementById('emptyState').classList.add('hidden');
+            document.getElementById('detailView').classList.remove('hidden');
+            document.getElementById('intensitySection').classList.remove('hidden');
+
+            initMap();
+            if (geoLayer) geoLayer.remove();
+            if (marker) marker.remove();
+
+            const lat = info.Epicenter.Latitude, lng = info.Epicenter.Longitude;
+            map.setView([lat, lng], 9);
+            marker = L.marker([lat, lng]).addTo(map).bindPopup(location).openPopup();
+
+            document.getElementById('statCards').innerHTML = `
+                <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-100 text-center"><span class="text-xs text-slate-400">規模</span><br><b class="text-xl text-red-500">${info.EarthquakeMagnitude.MagnitudeValue}</b></div>
+                <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-100 text-center"><span class="text-xs text-slate-400">深度</span><br><b class="text-xl text-blue-500">${info.Depth.Value}km</b></div>
+                <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-100 text-center"><span class="text-xs text-slate-400">時間</span><br><b class="text-sm text-slate-600">${info.OriginTime.split(' ')[1]}</b></div>
+                <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-100 text-center"><span class="text-xs text-slate-400">地點</span><br><b class="text-[10px] text-slate-600">${location.substring(0,6)}...</b></div>
+            `;
+
+            document.getElementById('intensityList').innerHTML = (eq.Intensity?.Report || []).map(r => `
+                <div class="flex justify-between p-2 bg-slate-50 rounded border border-slate-100">
+                    <span class="text-xs">${r.AreaName}</span>
+                    <span class="intensity-tag intensity-${parseInt(r.AreaIntensity)} text-[10px]">${r.AreaIntensity}</span>
+                </div>
+            `).join('');
+            lucide.createIcons();
+        }
+
+        function highlightCounty(countyName, index) {
+            document.getElementById('emptyState').classList.add('hidden');
+            document.getElementById('detailView').classList.remove('hidden');
+            document.getElementById('intensitySection').classList.add('hidden');
+            initMap();
+            if (marker) marker.remove();
+            if (geoLayer) geoLayer.remove();
+            const normName = countyName.replace('臺', '台');
+            if (geoJsonData) {
+                geoLayer = L.geoJson(geoJsonData, {
+                    filter: (f) => (f.properties.name || f.properties.COUNTYNAME || "").replace('臺', '台') === normName,
+                    style: { fillColor: '#3b82f6', fillOpacity: 0.4, color: '#2563eb', weight: 2 }
+                }).addTo(map);
+                const bounds = geoLayer.getBounds();
+                if (bounds.isValid()) map.fitBounds(bounds, { padding: [20, 20] });
+            }
+            const loc = weatherData[index];
+            const wx = loc.weatherElement.find(e => e.elementName === 'Wx').time[0].parameter.parameterName;
+            const maxT = loc.weatherElement.find(e => e.elementName === 'MaxT').time[0].parameter.parameterName;
+            document.getElementById('statCards').innerHTML = `
+                <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-100 text-center"><span class="text-xs text-slate-400">城市</span><br><b class="text-lg text-slate-800">${countyName}</b></div>
+                <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-100 text-center"><span class="text-xs text-slate-400">天氣</span><br><b class="text-sm text-blue-600">${wx}</b></div>
+                <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-100 text-center"><span class="text-xs text-slate-400">氣溫</span><br><b class="text-xl">${maxT}°C</b></div>
+            `;
+            lucide.createIcons();
+        }
+
+        function switchTab(t) {
+            document.getElementById('earthquakeList').classList.toggle('hidden', t !== 'eq');
+            document.getElementById('weatherList').classList.toggle('hidden', t !== 'we');
+            document.getElementById('tab-eq').classList.toggle('active-tab', t === 'eq');
+            document.getElementById('tab-we').classList.toggle('active-tab', t === 'we');
+        }
+
+        function toggleModal(s) { document.getElementById('copyrightModal').classList.toggle('hidden', !s); }
+        function showError(m) {
+            const t = document.getElementById('errorToast');
+            document.getElementById('errorMessage').innerText = m;
+            t.classList.remove('translate-y-20');
+            setTimeout(() => t.classList.add('translate-y-20'), 5000);
+        }
+
+        window.onload = () => {
+            lucide.createIcons();
+            fetchAllData();
+            setTimeout(() => toggleModal(true), 1000);
+        };
+    </script>
+</body>
+</html>
